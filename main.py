@@ -65,7 +65,7 @@ bot = Client(
 )
 
 apps = []
-for i, ss in enumerate(os.getenv("SESSION_STRING").splitlines()):
+for i, ss in enumerate(os.getenv("SESSION_STRING").split()):
     name = f"Client {i+1}"
     apps.append(Client(name=name, session_string=ss, **ext))
 
