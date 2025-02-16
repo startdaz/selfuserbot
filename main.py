@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(name)s: %(message)s")
 logging.getLogger("pyrogram").setLevel(logging.ERROR)
 
 subprocess.run(
@@ -479,13 +479,14 @@ if __name__ == "__main__":
     async def main() -> None:
         async def start(client: Client) -> None:
             await client.start()
-            logging.info(f"{client.name}: Started")
+
+            logger = logging.getLogger(client.name)
             for name, handler in cmds.items():
                 client.add_handler(handler)
-                logging.info(f"{name}: Added")
+                logger.info(f"{name} Added")
 
         await bot.start()
-        logging.info("Bot: Started")
+        logging.info("Client Helper: Started")
         await asyncio.gather(*[asyncio.create_task(start(app)) for app in apps])
 
     aiorun.run(main(), loop=bot.loop)
