@@ -1,6 +1,11 @@
-FROM python:3.11-alpine AS build
+FROM python:3.13-slim AS build
 
-RUN apk add --no-cache python3-dev gcc musl-dev libffi-dev openssl-dev
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-dev \
+    gcc \
+    libffi-dev \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -10,23 +15,27 @@ RUN python -m venv /install \
     && /install/bin/pip install --no-cache-dir -r requirements.txt
 
 
-FROM python:3.11-alpine
+FROM python:3.13-slim
 
 ENV PATH="/install/bin:$PATH"
 ENV HOSTNAME="Bot"
+ENV USER="self"
 
 WORKDIR /app
 
 COPY --from=build /install /install
 
-RUN apk add --no-cache tzdata \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    neofetch \
+    tzdata \
     && cp /usr/share/zoneinfo/Asia/Jakarta /etc/localtime \
     && echo "Asia/Jakarta" > /etc/timezone \
-    && adduser -D self \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m self \
     && chown -R self:self /app
 
 COPY --chown=self:self . .
-
-USER self
 
 CMD ["python", "main.py"]

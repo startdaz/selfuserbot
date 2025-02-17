@@ -2,5 +2,7 @@ aiohttp[speedups]
 aiorun
 https://github.com/TelegramPlayGround/pyrogram/archive/refs/heads/dev.zip
 meval
+py-tgcalls
 pytgcrypto
 uvloop
+yt-dlp
