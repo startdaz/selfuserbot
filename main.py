@@ -260,6 +260,8 @@ async def debug_cmd(client: Client, msg: Message) -> None:
                 "r": msg.reply_to_message,
                 "u": (msg.reply_to_message or msg).from_user,
                 "chat": msg.chat,
+                "bot": bot,
+                "call": client.call,
                 "play": play,
             }
 

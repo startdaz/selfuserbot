@@ -1,0 +1,20 @@
+{
+  "name": "Selfbot",
+  "stack": "container",
+  "env": {
+    "SESSION_STRING": {
+      "description": "Pyrogram Session String",
+      "required": true
+    },
+    "BOT_TOKEN": {
+      "description": "Telegram Bot Token",
+      "required": true
+    }
+  },
+  "formation": {
+    "worker": {
+      "quantity": 1,
+      "size": "eco"
+    }
+  }
+}
