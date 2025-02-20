@@ -101,6 +101,37 @@ cmds.update(
 )
 
 
+async def deleted_log(client: Client, messages: list[Message]) -> None:
+    cache = client.message_cache.store
+
+    for message in messages:
+        entry = next(
+            (
+                (_, message_id)
+                for (_, message_id) in cache.keys()
+                if message_id == message.id
+            ),
+            None,
+        )
+
+        if entry:
+            msg = cache[entry]
+
+            if not (msg.outgoing or msg.from_user.is_bot):
+                if size_valid(msg):
+                    btn = user_btn("🗑", msg)
+                    asyncio.create_task(send_log(msg, btn))
+
+
+cmds.update(
+    {
+        "Deleted Log": DeletedMessagesHandler(
+            deleted_log, filters.create(lambda _, __, msg: not msg.chat)
+        )
+    }
+)
+
+
 async def mentioned_log(client: Client, msg: Message) -> None:
     btn = None
 
@@ -149,37 +180,6 @@ cmds.update(
 )
 
 
-async def deleted_log(client: Client, messages: list[Message]) -> None:
-    cache = client.message_cache.store
-
-    for message in messages:
-        entry = next(
-            (
-                (_, message_id)
-                for (_, message_id) in cache.keys()
-                if message_id == message.id
-            ),
-            None,
-        )
-
-        if entry:
-            msg = cache[entry]
-
-            if not (msg.outgoing or msg.from_user.is_bot):
-                if size_valid(msg):
-                    btn = user_btn("🗑", msg)
-                    asyncio.create_task(send_log(msg, btn))
-
-
-cmds.update(
-    {
-        "Deleted Log": DeletedMessagesHandler(
-            deleted_log, filters.create(lambda _, __, msg: not msg.chat)
-        )
-    }
-)
-
-
 async def debug_cmd(client: Client, msg: Message) -> None:
     cmd, code = msg.text.split(maxsplit=1)
 
@@ -198,14 +198,18 @@ async def debug_cmd(client: Client, msg: Message) -> None:
                 ),
             )
 
-        async def paste(content: str) -> str:
-            url = "https://batbin.me"
+        async def paste(content: str) -> tuple:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(f"https://paste.rs", data=content) as post:
+                    post.raise_for_status()
+                    return await post.text()
 
-            async with aiohttp.ClientSession() as client:
-                async with client.post(f"{url}/api/v2/paste", data=content) as post:
-                    post_json = await post.json()
-
-                    return f"{url}/raw/{post_json['message']}"
+        def truncate(text: str, limit: int) -> str:
+            if len(text) > limit:
+                if limit > 3:
+                    return text[: limit - 3] + "..."
+                return text[:limit]
+            return text
 
         pre, out = None, None
 
@@ -246,22 +250,25 @@ async def debug_cmd(client: Client, msg: Message) -> None:
             out = (stdout + stderr).decode().strip()
 
         took = fmt_secs(time.perf_counter() - start)
-        resp = (
-            f"<pre language=Input>{html.escape(code)}</pre>\n"
-            f"<pre language='{pre}'>{html.escape(out)}</pre>\n"
-            f"<pre language=Elapsed>{took}</pre>"
-        )
 
-        if len(resp) > 1024:
-            link = await paste(out)
-            resp = (
-                f"<pre language=Input>{html.escape(code)}</pre>\n"
-                f"<pre language='{pre}'>{html.escape(out[:512]) + '...'}</pre>\n"
-                f"<blockquote><a href={link}><b>More...</b></a></blockquote>\n"
-                f"<pre language=Elapsed>{took}</pre>"
+        text = f"<pre language='{pre}'>{html.escape(out)}</pre>"
+        if len(text) > 1024:
+            more = None
+            if len(code) > 1024:
+                more = await paste(f"In:\n{code}\n\nOut:\n{out}")
+            else:
+                more = await paste(out)
+
+            text = (
+                f"<pre language='{pre}'>{html.escape(out[:512])}...</pre>"
+                f"<blockquote><a href={more}><b>More...</b></a></blockquote>"
             )
 
-        await msg.edit_text(resp)
+        _in = f"{code[:512]}..." if len(code) > 1024 else code
+        await msg.edit_text(
+            f"<pre language=Input>{html.escape(_in)}</pre>\n"
+            f"{text}\n<pre language=Elapsed>{took}</pre>"
+        )
 
     task = asyncio.create_task(aexec())
     client.message_cache.store.update({msg.id: (code, start, task)})
@@ -465,17 +472,6 @@ if __name__ == "__main__":
     )
     logging.getLogger("pyrogram").setLevel(logging.ERROR)
 
-    subprocess.run(
-        [sys.executable, "-m", "pip", "install", "-U", "pip"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    subprocess.run(
-        [sys.executable, "-m", "pip", "install", "-U", "-r", "requirements.txt"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
     ext = {
         "sleep_threshold": 900,
         "parse_mode": ParseMode.HTML,
@@ -499,16 +495,46 @@ if __name__ == "__main__":
         apps.append(app)
 
     async def main() -> None:
+        def sys_update() -> None:
+            subprocess.run(
+                ["git", "fetch"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            subprocess.run(
+                ["git", "reset", "--hard", "origin/master"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-U", "pip"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "-U",
+                    "-r",
+                    "requirements.txt",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
         async def start(client: Client) -> None:
             await client.start()
 
             logger = logging.getLogger(str(client.me.id))
             for name, handler in cmds.items():
                 client.add_handler(handler)
-                logger.info(f"{name} Handler Added")
+                logger.info(f"{name} Added")
 
             setattr(client, "call", PyTgCalls(client))
             await client.call.start()
+
+        sys_update()
 
         await bot.start()
         logging.info("Client Helper Started")

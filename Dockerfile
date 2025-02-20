@@ -26,6 +26,7 @@ WORKDIR /app
 COPY --from=build /install /install
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
     ffmpeg \
     neofetch \
     tzdata \
