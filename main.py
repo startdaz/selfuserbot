@@ -198,14 +198,14 @@ async def debug_cmd(client: Client, msg: Message) -> None:
                 ),
             )
 
-        async def dpaste(content: str) -> str:
+        async def paste(content: str) -> str:
+            url = "https://batbin.me"
+
             async with aiohttp.ClientSession() as client:
-                async with client.post(
-                    "https://dpaste.com/api/", data={"content": content}
-                ) as resp:
-                    resp.raise_for_status()
-                    resp_text = await resp.text()
-                    return resp_text.strip() + ".txt"
+                async with client.post(f"{url}/api/v2/paste", data=content) as post:
+                    post_json = await post.json()
+
+                    return f"{url}/raw/{post_json['message']}"
 
         pre, out = None, None
 
@@ -245,25 +245,26 @@ async def debug_cmd(client: Client, msg: Message) -> None:
             stdout, stderr = await res.communicate()
             out = (stdout + stderr).decode().strip()
 
-        took = f"Elapsed: {fmt_secs(time.perf_counter() - start)}"
-
-        message = (
-            f"<pre language='{took}'>{html.escape(code)}</pre>\n"
+        took = fmt_secs(time.perf_counter() - start)
+        resp = (
+            f"<pre language=Input>{html.escape(code)}</pre>\n"
             f"<pre language='{pre}'>{html.escape(out)}</pre>\n"
+            f"<pre language=Elapsed>{took}</pre>"
         )
 
-        if len(out) > 1024:
-            raw_url = await dpaste(out)
-            message = (
-                f"<pre language='{took}'>{html.escape(code)}</pre>\n"
+        if len(resp) > 1024:
+            link = await paste(out)
+            resp = (
+                f"<pre language=Input>{html.escape(code)}</pre>\n"
                 f"<pre language='{pre}'>{html.escape(out[:512]) + '...'}</pre>\n"
-                f"<blockquote><a href={raw_url}><b>More...</b></a></blockquote>"
+                f"<blockquote><a href={link}><b>More...</b></a></blockquote>\n"
+                f"<pre language=Elapsed>{took}</pre>"
             )
 
-        await msg.edit_text(message)
+        await msg.edit_text(resp)
 
     task = asyncio.create_task(aexec())
-    client.message_cache.store.update({msg.id: (task, code, start)})
+    client.message_cache.store.update({msg.id: (code, start, task)})
 
     try:
         await task
@@ -287,13 +288,14 @@ async def abort_cmd(_: Client, msg: Message) -> None:
     if not cache:
         return
 
-    task, code, start = cache
+    code, start, task = cache
     task.cancel()
 
     took = fmt_secs(time.perf_counter() - start)
     await asyncio.gather(
         msg.edit_text(
-            f"<pre language='Aborted - Elapsed: {took}'>{html.escape(code)}</pre>"
+            f"<pre language=Aborted>{html.escape(code)}</pre>\n"
+            f"<pre language=Elapsed>{took}</pre>"
         ),
         reply.delete(),
     )
@@ -369,8 +371,8 @@ cmds.update(
             purge_cmd,
             filters.me
             & (
-                (filters.reply & filters.regex(r"^purge$"))
-                | filters.regex(r"^purgeme(\s\d+)?$")
+                (filters.regex(r"^purge$") & filters.reply)
+                | (filters.regex(r"^purgeme(\s\d+)?$") & ~filters.reply)
             ),
         )
     }
