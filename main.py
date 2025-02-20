@@ -14,15 +14,29 @@ import pyrogram
 from meval import meval
 from pyrogram import Client, filters
 from pyrogram.enums import ChatType, ParseMode
-from pyrogram.handlers import DeletedMessagesHandler, MessageHandler, RawUpdateHandler
+from pyrogram.errors import PeerIdInvalid
+from pyrogram.handlers import (
+    DeletedMessagesHandler,
+    EditedMessageHandler,
+    MessageHandler,
+    RawUpdateHandler,
+)
 from pyrogram.raw.base import Update
 from pyrogram.raw.functions.messages import ReadMentions
-from pyrogram.raw.types import Channel, ChannelForbidden, UpdateChannel, User
+from pyrogram.raw.types import (
+    Channel,
+    ChannelForbidden,
+    UpdateChannel,
+    UpdateUserName,
+    UpdateUserTyping,
+    User,
+)
 from pyrogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     LinkPreviewOptions,
     Message,
+    ReplyParameters,
     Story,
 )
 from pyrogram.utils import get_channel_id, timestamp_to_datetime
@@ -37,6 +51,52 @@ else:
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 cmds = {}
+
+
+async def action_log(client: Client, event: Update, _: User, __: Channel) -> None:
+    user_id = event.user_id
+
+    history = None
+    with contextlib.suppress(PeerIdInvalid):
+        async for msg in client.get_chat_history(user_id, limit=1):
+            history = msg
+
+    if not history:
+        act = type(event.action).__name__
+        btn = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("User", url=f"tg://user?id={user_id}")]]
+        )
+
+        await client.bot.send_message(
+            client.me.id, f"<pre language='User Action'>{act}</pre>", reply_markup=btn
+        )
+
+
+flt_action = filters.create(
+    lambda _, __, event: isinstance(event, UpdateUserTyping), "Flt Action"
+)
+cmds.update({"Action Log": RawUpdateHandler(action_log, flt_action)})
+
+
+async def profile_log(client: Client, event: Update, _: User, __: Channel) -> None:
+    await client.bot.send_message(
+        client.me.id,
+        (
+            "<pre language='Profile Updated'>"
+            f"First Name: {html.escape(event.first_name)}\n"
+            f"Last Name : {html.escape(event.last_name)}\n"
+            f"Username  : {event.usernames}</pre>"
+        ),
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("User", url=f"tg://user?id={event.user_id}")]]
+        ),
+    )
+
+
+flt_profile = filters.create(
+    lambda _, __, event: isinstance(event, UpdateUserName), "Flt Profile"
+)
+cmds.update({"Profile Log": RawUpdateHandler(profile_log, flt_profile)})
 
 
 async def event_log(client: Client, _: Update, __: User, chat: Channel) -> None:
@@ -83,7 +143,7 @@ async def event_log(client: Client, _: Update, __: User, chat: Channel) -> None:
                     [
                         [
                             InlineKeyboardButton(
-                                "💬", url=f"tg://openmessage?chat_id={event.id}"
+                                "Chat", url=f"tg://openmessage?chat_id={event.id}"
                             )
                         ]
                     ]
@@ -91,14 +151,10 @@ async def event_log(client: Client, _: Update, __: User, chat: Channel) -> None:
             )
 
 
-cmds.update(
-    {
-        "Event Log": RawUpdateHandler(
-            event_log,
-            filters.create(lambda _, __, event: isinstance(event, UpdateChannel)),
-        )
-    }
+flt_event = filters.create(
+    lambda _, __, event: isinstance(event, UpdateChannel), "Flt Event"
 )
+cmds.update({"Event Log": RawUpdateHandler(event_log, flt_event)})
 
 
 async def deleted_log(client: Client, messages: list[Message]) -> None:
@@ -119,29 +175,41 @@ async def deleted_log(client: Client, messages: list[Message]) -> None:
 
             if not (msg.outgoing or msg.from_user.is_bot):
                 if size_valid(msg):
-                    btn = user_btn("🗑", msg)
+                    btn = user_btn("Deleted", msg)
                     asyncio.create_task(send_log(msg, btn))
+
+
+flt_deleted = filters.create(lambda _, __, msg: not msg.chat, "Flt Deleted")
+cmds.update({"Deleted Log": DeletedMessagesHandler(deleted_log, flt_deleted)})
+
+
+async def edited_log(client: Client, msg: Message) -> None:
+    if not size_valid(msg):
+        return
+
+    btn = chat_btn("Edited", msg)
+    asyncio.create_task(send_log(msg, btn))
 
 
 cmds.update(
     {
-        "Deleted Log": DeletedMessagesHandler(
-            deleted_log, filters.create(lambda _, __, msg: not msg.chat)
+        "Edited Log": EditedMessageHandler(
+            edited_log, ~filters.me & ~filters.bot & filters.mentioned
         )
     }
 )
 
 
 async def mentioned_log(client: Client, msg: Message) -> None:
-    btn = None
-
     if not size_valid(msg):
         return
+
+    btn = None
 
     if msg.chat.type == ChatType.PRIVATE:
         obj = getattr(msg, msg.media.value)
         if hasattr(obj, "ttl_seconds") and obj.ttl_seconds:
-            btn = user_btn("⌛️", msg)
+            btn = user_btn("Limited", msg)
     else:
         peer = await client.resolve_peer(msg.chat.id)
 
@@ -151,18 +219,7 @@ async def mentioned_log(client: Client, msg: Message) -> None:
 
         await client.invoke(ReadMentions(peer=peer, top_msg_id=top))
 
-        url = f"https://t.me/c/{get_channel_id(msg.chat.id)}/{msg.id}"
-        if msg.chat.is_forum:
-            url = msg.link
-
-        tmp = [InlineKeyboardButton("💬", url=url)]
-        if msg.from_user:
-            tmp.insert(
-                0,
-                InlineKeyboardButton("👤", url=f"tg://user?id={msg.from_user.id}"),
-            )
-
-        btn = InlineKeyboardMarkup([tmp])
+        btn = chat_btn("Message", msg)
 
     if btn:
         asyncio.create_task(send_log(msg, btn))
@@ -222,6 +279,7 @@ async def debug_cmd(client: Client, msg: Message) -> None:
                 "types": pyrogram.types,
                 "utils": pyrogram.utils,
                 "raw": pyrogram.raw,
+                "cache": client.message_cache.store,
                 "c": client,
                 "m": msg,
                 "r": msg.reply_to_message,
@@ -386,17 +444,32 @@ cmds.update(
 )
 
 
-def user_btn(emoji: str, msg: Message) -> InlineKeyboardMarkup:
+def user_btn(title: str, msg: Message) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton(
-                    emoji,
+                    title,
                     url=f"tg://openmessage?user_id={msg.from_user.id}&message_id={msg.id}",
                 )
             ]
         ]
     )
+
+
+def chat_btn(title: str, msg: Message) -> InlineKeyboardMarkup:
+    url = f"https://t.me/c/{get_channel_id(msg.chat.id)}/{msg.id}"
+    if msg.chat.is_forum:
+        url = msg.link
+
+    tmp = [[InlineKeyboardButton(title, url=url)]]
+    if msg.from_user:
+        tmp.insert(
+            0,
+            [InlineKeyboardButton("User", url=f"tg://user?id={msg.from_user.id}")],
+        )
+
+    return InlineKeyboardMarkup(tmp)
 
 
 def size_valid(msg: Message) -> bool:
@@ -408,22 +481,39 @@ def size_valid(msg: Message) -> bool:
     return True
 
 
-async def send_log(msg: Message, btn: InlineKeyboardMarkup) -> Message:
+async def send_log(msg: Message, btn: InlineKeyboardMarkup) -> None:
     app, bot = msg._client, msg._client.bot
 
     async def download(file_id: str) -> io.BytesIO:
         return await app.download_media(file_id, in_memory=True)
 
+    if msg.service:
+        return None
+
     app_id = app.me.id
+    caches = bot.message_cache.store
+
+    rep = None
+
+    key_id = (app_id, msg.chat.id, msg.id)
+    if key_id in caches.keys():
+        old = caches.get(key_id)
+        rep = ReplyParameters(message_id=old)
+        btn = None
 
     if msg.text:
-        await bot.send_message(app_id, msg.text.html, reply_markup=btn)
+        sent = await bot.send_message(
+            app_id, msg.text.html, reply_markup=btn, reply_parameters=rep
+        )
+        caches.update({key_id: sent.id})
         return
 
     obj = getattr(msg, msg.media.value)
 
     if msg.sticker:
-        await bot.send_sticker(app_id, obj.file_id, reply_markup=btn)
+        await bot.send_sticker(
+            app_id, obj.file_id, reply_markup=btn, reply_parameters=rep
+        )
         return
 
     if isinstance(obj, Story):
@@ -434,6 +524,7 @@ async def send_log(msg: Message, btn: InlineKeyboardMarkup) -> Message:
     parameters = {
         "chat_id": app_id,
         "reply_markup": btn,
+        "reply_parameters": rep,
         **(
             {msg.media.value: await download(obj.file_id)}
             if hasattr(obj, "file_id")
@@ -453,7 +544,8 @@ async def send_log(msg: Message, btn: InlineKeyboardMarkup) -> Message:
     for attr in ["view_once", "ttl_seconds"]:
         parameters.pop(attr, None)
 
-    await send_media(**parameters)
+    sent = await send_media(**parameters)
+    caches.update({key_id: sent.id})
 
 
 def fmt_secs(secs: int | float) -> str:
@@ -473,8 +565,9 @@ if __name__ == "__main__":
     logging.getLogger("pyrogram").setLevel(logging.ERROR)
 
     ext = {
-        "sleep_threshold": 900,
         "parse_mode": ParseMode.HTML,
+        "sleep_threshold": 900,
+        "max_message_cache_size": 2147483647,
         "link_preview_options": LinkPreviewOptions(is_disabled=True),
     }
 
@@ -533,6 +626,12 @@ if __name__ == "__main__":
 
             setattr(client, "call", PyTgCalls(client))
             await client.call.start()
+
+            limit = await client.get_dialogs_count()
+            async for _ in client.get_dialogs(limit=limit):
+                pass
+
+            await client.storage.save()
 
         sys_update()
 
