@@ -268,14 +268,14 @@ async def debug_cmd(client: Client, msg: Message) -> None:
                 return text[:limit]
             return text
 
-        pre, out = None, None
+        pre, out = "python", None
 
         if cmd == "e":
-            pre = "python"
-            arg = {
+            kwargs = {
                 "asyncio": asyncio,
                 "pyrogram": pyrogram,
                 "enums": pyrogram.enums,
+                "errors": pyrogram.errors,
                 "types": pyrogram.types,
                 "utils": pyrogram.utils,
                 "raw": pyrogram.raw,
@@ -291,7 +291,7 @@ async def debug_cmd(client: Client, msg: Message) -> None:
             f = io.StringIO()
             with contextlib.redirect_stdout(f):
                 try:
-                    res = await meval(code, globals(), **arg)
+                    res = await meval(code, globals(), **kwargs)
                     out = f.getvalue().strip() or str(res)
                 except Exception as e:
                     pre, out = type(e).__name__, str(e)
@@ -413,11 +413,11 @@ async def purge_cmd(client: Client, msg: Message) -> None:
     if text == "purge":
         ids = await search_msgs(min_id=msg.reply_to_message_id - 1)
     else:
-        arg = text.split()
-        if len(arg) < 2:
+        args = text.split()
+        if len(args) < 2:
             ids = await search_msgs(me=True)
         else:
-            _id = int(arg[1])
+            _id = int(args[1])
             ids = await search_msgs(limit=_id + 1, me=True)
 
     done = 0
