@@ -17,9 +17,11 @@ RUN python -m venv /install \
 
 FROM python:3.13-slim
 
-ENV PATH="/install/bin:$PATH"
-ENV HOSTNAME="Bot"
-ENV USER="self"
+ENV PATH="/install/bin:$PATH" \
+    HOSTNAME="Bot" \
+    USER="self" \
+    TERM="xterm"
+
 
 WORKDIR /app
 

@@ -653,24 +653,12 @@ if __name__ == "__main__":
 
     async def main() -> None:
         def sys_update() -> None:
+            subprocess.run([sys.executable, "-m", "pip", "install", "-U", "pip"])
             subprocess.run(
-                [sys.executable, "-m", "pip", "install", "-U", "pip"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                [sys.executable, "-m", "pip", "install", "-U", "-r", "requirements.txt"]
             )
-            subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "pip",
-                    "install",
-                    "-U",
-                    "-r",
-                    "requirements.txt",
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+
+            os.system("clear")
 
         async def start(client: Client) -> None:
             await client.start()
