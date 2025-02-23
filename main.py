@@ -294,11 +294,16 @@ async def debug_cmd(client: Client, msg: Message) -> None:
     start = time.perf_counter()
 
     async def aexec() -> None:
-        async def play(url: str, video: bool = False, **kwargs) -> None:
+        async def play(
+            media_path: str,
+            chat_id: int | str = msg.chat.id,
+            video: bool = False,
+            **kwargs,
+        ) -> None:
             await client.call.play(
-                chat_id=msg.chat.id,
+                chat_id=chat_id,
                 stream=MediaStream(
-                    media_path=url,
+                    media_path=media_path,
                     video_flags=None if video else MediaStream.Flags.IGNORE,
                     ytdlp_parameters="--cookies cookies.txt",
                     **kwargs,
@@ -328,6 +333,7 @@ async def debug_cmd(client: Client, msg: Message) -> None:
                 "r": msg.reply_to_message,
                 "u": (msg.reply_to_message or msg).from_user,
                 "chat": msg.chat,
+                "call": client.call,
                 "play": play,
             }
 
