@@ -14,7 +14,7 @@ import pyrogram
 from meval import meval
 from pyrogram import Client, filters
 from pyrogram.enums import ChatType, ParseMode
-from pyrogram.errors import PeerIdInvalid
+from pyrogram.errors import MessageIdInvalid, PeerIdInvalid
 from pyrogram.handlers import (
     DeletedMessagesHandler,
     EditedMessageHandler,
@@ -383,11 +383,13 @@ async def debug_cmd(client: Client, msg: Message) -> None:
         await task
     except asyncio.CancelledError:
         took = fmt_secs(secs=time.perf_counter() - start)
-        text = (
-            f"<pre language=Aborted>{html.escape(code)}</pre>\n"
-            f"<pre language=Elapsed>{took}</pre>"
-        )
-        await msg.edit_text(text=text)
+
+        with contextlib.suppress(MessageIdInvalid):
+            text = (
+                f"<pre language=Aborted>{html.escape(code)}</pre>\n"
+                f"<pre language=Elapsed>{took}</pre>"
+            )
+            await msg.edit_text(text=text)
     finally:
         client.message_cache.store.pop(name, None)
 
