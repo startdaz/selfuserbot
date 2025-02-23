@@ -26,7 +26,6 @@ WORKDIR /app
 COPY --from=build /install /install
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
     ffmpeg \
     neofetch \
     tzdata \
@@ -34,8 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && echo "Asia/Jakarta" > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -m self \
-    && chown -R self:self /app
+RUN useradd -m self && chown -R self:self /app
 
 COPY --chown=self:self . .
 

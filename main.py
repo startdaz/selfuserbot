@@ -195,10 +195,7 @@ async def deleted_log(client: Client, messages: list[Message]) -> None:
 
         if entry:
             msg = cache[entry]
-            if not size_valid(msg):
-                continue
-
-            if not (msg.outgoing or msg.from_user.is_bot):
+            if size_valid(msg) and not (msg.outgoing or msg.from_user.is_bot):
                 btn = user_btn(text="Deleted", msg=msg)
                 await send_log(msg=msg, btn=btn)
 
@@ -227,7 +224,7 @@ cmds.update(
 
 
 async def ping_cmd(client: Client, msg: Message) -> None:
-    await msg.edit_text(text="<blockquote>...</blockquote>")
+    await msg.edit_text(text="<blockquote><b>...</b></blockquote>")
 
     ping = time.perf_counter()
     await client.invoke(Ping(ping_id=client.rnd_id()))
@@ -378,13 +375,21 @@ async def debug_cmd(client: Client, msg: Message) -> None:
         )
         await msg.edit_text(text=result)
 
-    task = asyncio.create_task(coro=aexec(), name="Debug Task")
-    client.message_cache.store.update({msg.id: (code, start, task)})
+    name = f"{client.me.id}_{msg.chat.id}_{msg.id}"
+    task = asyncio.create_task(coro=aexec(), name=name)
+    client.message_cache.store.update({name: task})
 
     try:
         await task
+    except asyncio.CancelledError:
+        took = fmt_secs(secs=time.perf_counter() - start)
+        text = (
+            f"<pre language=Aborted>{html.escape(code)}</pre>\n"
+            f"<pre language=Elapsed>{took}</pre>"
+        )
+        await msg.edit_text(text=text)
     finally:
-        client.message_cache.store.pop(msg.id, None)
+        client.message_cache.store.pop(name, None)
 
 
 cmds.update(
@@ -396,29 +401,37 @@ cmds.update(
 )
 
 
-async def abort_cmd(_: Client, msg: Message) -> None:
-    reply = msg.reply_to_message
+async def abort_cmd(client: Client, msg: Message) -> None:
+    await msg.edit_text(text="<blockquote><b>Aborting...</b></blockquote>")
 
-    cache = msg._client.message_cache.store.get(reply.id, None)
-    if not cache:
+    tasks = []
+    if msg.reply_to_message_id:
+        task = client.message_cache.store.get(
+            f"{client.me.id}_{msg.chat.id}_{msg.reply_to_message_id}"
+        )
+        if task:
+            tasks = [task]
+
+    else:
+        for task in asyncio.all_tasks():
+            if task.get_name().startswith(f"{client.me.id}_"):
+                tasks.append(task)
+
+    if not tasks:
+        await msg.edit_text(text="<blockquote><b>None</b></blockquote>")
         return
 
-    code, start, task = cache
-    task.cancel()
+    for task in tasks:
+        task.cancel()
 
-    took = fmt_secs(secs=time.perf_counter() - start)
-    text = (
-        f"<pre language=Aborted>{html.escape(code)}</pre>\n"
-        f"<pre language=Elapsed>{took}</pre>"
-    )
-    await asyncio.gather(msg.edit_text(text=text), reply.delete(revoke=True))
+    text = f"{len(tasks)} Task{'s' if len(tasks) > 1 else ''} Aborted"
+    await msg.edit_text(text=f"<blockquote><b>{text}</b></blockquote>")
 
 
 cmds.update(
     {
         "Abort CMD": MessageHandler(
-            callback=abort_cmd,
-            filters=filters.me & filters.reply & filters.regex(r"^x$"),
+            callback=abort_cmd, filters=filters.me & filters.regex(r"^x$")
         )
     }
 )
@@ -460,7 +473,7 @@ async def purge_cmd(client: Client, msg: Message) -> None:
         await asyncio.sleep(delay=sleep)
         await msg.delete(revoke=True)
 
-    await msg.edit_text(text="<blockquote>Purging...</blockquote>")
+    await msg.edit_text(text="<blockquote><b>Purging...</b></blockquote>")
 
     if text == "purge":
         ids = await search_msgs(min_id=msg.reply_to_message_id - 1)
@@ -479,7 +492,7 @@ async def purge_cmd(client: Client, msg: Message) -> None:
         )
 
     result = f"{done} Message{'s' if done > 1 else ''} Deleted"
-    await msg.edit_text(text=f"<blockquote>{result}</blockquote>")
+    await msg.edit_text(text=f"<blockquote><b>{result}</b></blockquote>")
 
     await del_after(sleep=2.5)
 
@@ -641,14 +654,6 @@ if __name__ == "__main__":
     async def main() -> None:
         def sys_update() -> None:
             subprocess.run(
-                ["git", "fetch"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-            subprocess.run(
-                ["git", "reset", "--hard", "origin/master"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            subprocess.run(
                 [sys.executable, "-m", "pip", "install", "-U", "pip"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -685,6 +690,7 @@ if __name__ == "__main__":
             await client.storage.save()
 
         sys_update()
+        logging.info("System Up to Date")
 
         await bot.start()
         logging.info("Client Helper Started")
