@@ -1,8 +1,6 @@
 aiohttp[speedups]
 aiorun
 meval
-py-tgcalls
 pyrotgfork
 pytgcrypto
 uvloop
-yt-dlp

@@ -4,8 +4,6 @@ import html
 import io
 import logging
 import os
-import subprocess
-import sys
 import time
 
 import aiohttp
@@ -13,7 +11,7 @@ import aiorun
 import pyrogram
 from meval import meval
 from pyrogram import Client, filters
-from pyrogram.enums import ChatType, ParseMode
+from pyrogram.enums import ParseMode
 from pyrogram.errors import MessageIdInvalid, PeerIdInvalid
 from pyrogram.handlers import (
     DeletedMessagesHandler,
@@ -22,8 +20,6 @@ from pyrogram.handlers import (
     RawUpdateHandler,
 )
 from pyrogram.raw.base import Update
-from pyrogram.raw.functions import Ping
-from pyrogram.raw.functions.messages import ReadMentions
 from pyrogram.raw.types import (
     Channel,
     ChannelForbidden,
@@ -41,8 +37,6 @@ from pyrogram.types import (
     Story,
 )
 from pyrogram.utils import get_channel_id, timestamp_to_datetime
-from pytgcalls import PyTgCalls
-from pytgcalls.types import MediaStream
 
 try:
     import uvloop
@@ -54,8 +48,8 @@ else:
 cmds = {}
 
 
-async def action_log(client: Client, event: Update, _: User, __: Channel) -> None:
-    user_id = event.user_id
+async def action_log(client: Client, update: Update, _: User, __: Channel) -> None:
+    user_id = update.user_id
 
     history = None
     with contextlib.suppress(PeerIdInvalid):
@@ -63,7 +57,7 @@ async def action_log(client: Client, event: Update, _: User, __: Channel) -> Non
             history = msg
 
     if not history:
-        log = type(event.action).__name__
+        log = type(update.action).__name__
         btn = InlineKeyboardMarkup(
             [[InlineKeyboardButton(text="User", url=f"tg://user?id={user_id}")]]
         )
@@ -75,22 +69,29 @@ async def action_log(client: Client, event: Update, _: User, __: Channel) -> Non
         )
 
 
-flt_action = filters.create(
-    lambda _, __, event: isinstance(event, UpdateUserTyping), "Flt Action"
+cmds.update(
+    {
+        "Action Log": RawUpdateHandler(
+            callback=action_log,
+            filters=filters.create(
+                lambda _, __, update: isinstance(update, UpdateUserTyping),
+                name="Filter Action Log",
+            ),
+        )
+    }
 )
-cmds.update({"Action Log": RawUpdateHandler(callback=action_log, filters=flt_action)})
 
 
-async def profile_log(client: Client, event: Update, _: User, __: Channel) -> None:
-    user_id = event.user_id
+async def profile_log(client: Client, update: Update, _: User, __: Channel) -> None:
+    user_id = update.user_id
     if user_id == client.me.id:
         return
 
     fmt = ""
-    if event.last_name:
-        fmt = f"\nLast Name : {html.escape(event.last_name)}"
+    if update.last_name:
+        fmt = f"\nLast Name : {html.escape(update.last_name)}"
 
-    usernames = [obj.username for obj in event.usernames]
+    usernames = [obj.username for obj in update.usernames]
     if usernames:
         key = "Username  " if len(usernames) == 1 else "Usernames "
         fmt += f"\n{key}: {', '.join(usernames)}"
@@ -98,7 +99,7 @@ async def profile_log(client: Client, event: Update, _: User, __: Channel) -> No
     btn = InlineKeyboardMarkup(
         [[InlineKeyboardButton(text="User", url=f"tg://user?id={user_id}")]]
     )
-    log = f"First Name: {html.escape(event.first_name)}{fmt}"
+    log = f"First Name: {html.escape(update.first_name)}{fmt}"
 
     await client.bot.send_message(
         chat_id=client.me.id,
@@ -107,23 +108,28 @@ async def profile_log(client: Client, event: Update, _: User, __: Channel) -> No
     )
 
 
-flt_profile = filters.create(
-    lambda _, __, event: isinstance(event, UpdateUserName), "Flt Profile"
-)
 cmds.update(
-    {"Profile Log": RawUpdateHandler(callback=profile_log, filters=flt_profile)}
+    {
+        "Profile Log": RawUpdateHandler(
+            callback=profile_log,
+            filters=filters.create(
+                lambda _, __, update: isinstance(update, UpdateUserName),
+                name="Filter Profile Log",
+            ),
+        )
+    }
 )
 
 
-async def event_log(client: Client, _: Update, user: User, chat: Channel) -> None:
+async def event_log(client: Client, _: Update, user: User, channel: Channel) -> None:
     def fmt_date(timestamp: int) -> str:
         dt = timestamp_to_datetime(timestamp)
-        return dt.strftime("%b %-d, %-H:%M %p")
+        return dt.strftime("%b %-d, %-I:%M %p")
 
     int32 = 2**31 - 1
 
     if not user:
-        for _, event in chat.items():
+        for _, event in channel.items():
             title = html.escape(event.title)
             status, until = None, None
 
@@ -174,111 +180,103 @@ async def event_log(client: Client, _: Update, user: User, chat: Channel) -> Non
                 )
 
 
-flt_event = filters.create(
-    lambda _, __, event: isinstance(event, UpdateChannel), "Flt Event"
+cmds.update(
+    {
+        "Event Log": RawUpdateHandler(
+            callback=event_log,
+            filters=filters.create(
+                lambda _, __, update: isinstance(update, UpdateChannel),
+                name="Filter Event Log",
+            ),
+        )
+    }
 )
-cmds.update({"Event Log": RawUpdateHandler(callback=event_log, filters=flt_event)})
 
 
 async def deleted_log(client: Client, messages: list[Message]) -> None:
     cache = client.message_cache.store
 
     for message in messages:
-        entry = next(
-            (
-                (_, message_id)
-                for (_, message_id) in cache.keys()
-                if message_id == message.id
-            ),
-            None,
-        )
+        msg, btn = None, None
 
-        if entry:
-            msg = cache[entry]
-            if size_valid(msg) and not (msg.outgoing or msg.from_user.is_bot):
+        if message.chat and (message.id, message.chat.id) in cache:
+            msg = cache.get((message.id, message.chat.id))
+            btn = chat_btn(text="Deleted", msg=msg)
+
+        else:
+            entry = next(
+                (
+                    (message_id, _)
+                    for (message_id, _) in cache.keys()
+                    if message_id == message.id
+                ),
+                None,
+            )
+            if entry:
+                msg = cache.get(entry)
                 btn = user_btn(text="Deleted", msg=msg)
-                await send_log(msg=msg, btn=btn)
+
+        if msg and btn:
+            client.bot.message_cache.store.pop(
+                (client.me.id, msg.chat.id, msg.id), None
+            )
+
+            await send_log(msg=msg, btn=btn)
+            cache.pop((msg.id, msg.chat.id), None)
 
 
-flt_deleted = filters.create(lambda _, __, msg: not msg.chat, "Flt Deleted")
-cmds.update(
-    {"Deleted Log": DeletedMessagesHandler(callback=deleted_log, filters=flt_deleted)}
-)
+cmds.update({"Deleted Log": DeletedMessagesHandler(callback=deleted_log)})
 
 
 async def edited_log(client: Client, msg: Message) -> None:
-    if not size_valid(msg):
-        return
+    cache = client.message_cache.store
 
-    btn = chat_btn(text="Edited", msg=msg)
+    if (msg.id, msg.chat.id) in cache:
+        msg = cache.get((msg.id, msg.chat.id))
+
+    new = cache.get((msg.chat.id, msg.id))
+    cache.update({(msg.id, msg.chat.id): new})
+
+    btn = user_btn(text="Edited", msg=msg)
+    if msg.mentioned:
+        btn = chat_btn(text="Edited", msg=msg)
+
     await send_log(msg=msg, btn=btn)
+    cache.pop((msg.chat.id, msg.id), None)
 
 
 cmds.update(
     {
         "Edited Log": EditedMessageHandler(
-            callback=edited_log, filters=~filters.me & ~filters.bot & filters.mentioned
-        )
-    }
-)
-
-
-async def ping_cmd(client: Client, msg: Message) -> None:
-    await msg.edit_text(text="<blockquote><b>...</b></blockquote>")
-
-    ping = time.perf_counter()
-    await client.invoke(Ping(ping_id=client.rnd_id()))
-    pong = fmt_secs(secs=time.perf_counter() - ping)
-
-    text = (
-        "<a href='https://github.com/peerids/selfbot'><b>Selfbot</b></a>"
-        f" - <b>Ping</b>\n<blockquote><b>{pong}</b></blockquote>"
-    )
-    await msg.edit_text(text=text)
-
-
-cmds.update(
-    {
-        "Ping CMD": MessageHandler(
-            callback=ping_cmd,
-            filters=filters.me & ~filters.reply & filters.regex(r"^p$"),
+            callback=edited_log,
+            filters=~filters.outgoing
+            & ~filters.bot
+            & (filters.mentioned | filters.private),
         )
     }
 )
 
 
 async def mentioned_log(client: Client, msg: Message) -> None:
-    if not size_valid(msg):
-        return
+    cache = client.message_cache.store
+    cache.update({(msg.id, msg.chat.id): msg})
 
-    btn = None
-
-    if msg.chat.type == ChatType.PRIVATE:
+    if msg.media:
         obj = getattr(msg, msg.media.value)
         if hasattr(obj, "ttl_seconds") and obj.ttl_seconds:
             btn = user_btn(text="Limited", msg=msg)
-    else:
-        peer = await client.resolve_peer(peer_id=msg.chat.id)
+            await send_log(msg=msg, btn=btn)
 
-        top = None
-        if msg.chat.is_forum and msg.message_thread_id:
-            top = msg.message_thread_id
-
-        await client.invoke(ReadMentions(peer=peer, top_msg_id=top))
-
-        btn = chat_btn(text="Message", msg=msg)
-
-    if btn:
-        await send_log(msg=msg, btn=btn)
+    cache.pop((msg.chat.id, msg.id), None)
 
 
 cmds.update(
     {
         "Mentioned Log": MessageHandler(
             callback=mentioned_log,
-            filters=~filters.me
+            filters=~filters.outgoing
             & ~filters.bot
-            & ((filters.private & filters.media) | filters.mentioned),
+            & (filters.mentioned | filters.private),
         )
     }
 )
@@ -291,23 +289,7 @@ async def debug_cmd(client: Client, msg: Message) -> None:
     start = time.perf_counter()
 
     async def aexec() -> None:
-        async def play(
-            media_path: str,
-            chat_id: int | str = msg.chat.id,
-            video: bool = False,
-            **kwargs,
-        ) -> None:
-            await client.call.play(
-                chat_id=chat_id,
-                stream=MediaStream(
-                    media_path=media_path,
-                    video_flags=None if video else MediaStream.Flags.IGNORE,
-                    ytdlp_parameters="--cookies cookies.txt",
-                    **kwargs,
-                ),
-            )
-
-        async def paste(content: str) -> str:
+        async def paste_rs(content: str) -> str:
             async with aiohttp.ClientSession() as session:
                 async with session.post(f"https://paste.rs", data=content) as post:
                     post.raise_for_status()
@@ -319,30 +301,25 @@ async def debug_cmd(client: Client, msg: Message) -> None:
             kwargs = {
                 "asyncio": asyncio,
                 "pyrogram": pyrogram,
-                "enums": pyrogram.enums,
-                "errors": pyrogram.errors,
-                "types": pyrogram.types,
-                "utils": pyrogram.utils,
-                "raw": pyrogram.raw,
-                "cache": client.message_cache.store,
                 "c": client,
                 "m": msg,
                 "r": msg.reply_to_message,
                 "u": (msg.reply_to_message or msg).from_user,
-                "chat": msg.chat,
-                "call": client.call,
-                "play": play,
             }
 
             f = io.StringIO()
             with contextlib.redirect_stdout(f):
                 try:
+                    client.max_concurrent_transmissions += 1
                     res = await meval(code=code, globs=globals(), **kwargs)
-                    out = f.getvalue().strip() or str(res)
                 except Exception as e:
                     pre, out = type(e).__name__, str(e)
                     if hasattr(e, "MESSAGE"):
                         out = str(e.MESSAGE).format(value=e.value)
+                else:
+                    out = f.getvalue().strip() or str(res)
+                finally:
+                    client.max_concurrent_transmissions -= 1
         elif cmd == "sh":
             pre = "bash"
             res = await asyncio.create_subprocess_shell(
@@ -359,9 +336,9 @@ async def debug_cmd(client: Client, msg: Message) -> None:
         if len(text) > 1024:
             more = None
             if len(code) > 1024:
-                more = await paste(content=f"In:\n{code}\n\nOut:\n{out}")
+                more = await paste_rs(content=f"In:\n{code}\n\nOut:\n{out}")
             else:
-                more = await paste(content=out)
+                more = await paste_rs(content=out)
 
             text = (
                 f"<pre language='{pre}'>{html.escape(out[:512])}...</pre>"
@@ -377,27 +354,67 @@ async def debug_cmd(client: Client, msg: Message) -> None:
 
     name = f"{client.me.id}_{msg.chat.id}_{msg.id}"
     task = asyncio.create_task(coro=aexec(), name=name)
-    client.message_cache.store.update({name: task})
 
     try:
-        await task
-    except asyncio.CancelledError:
-        took = fmt_secs(secs=time.perf_counter() - start)
+        await asyncio.wait_for(fut=task, timeout=900)
+    except (asyncio.CancelledError, asyncio.TimeoutError) as e:
+        if isinstance(e, asyncio.TimeoutError):
+            task.cancel()
 
+        took = fmt_secs(secs=time.perf_counter() - start)
+        text = (
+            f"<pre language={type(e).__name__}>{html.escape(code)}</pre>\n"
+            f"<pre language=Elapsed>{took}</pre>"
+        )
         with contextlib.suppress(MessageIdInvalid):
-            text = (
-                f"<pre language=Aborted>{html.escape(code)}</pre>\n"
-                f"<pre language=Elapsed>{took}</pre>"
-            )
             await msg.edit_text(text=text)
     finally:
-        client.message_cache.store.pop(name, None)
+        del task
 
 
 cmds.update(
     {
         "Debug CMD": MessageHandler(
-            callback=debug_cmd, filters=filters.me & filters.regex(r"^(e|sh)\s+.*")
+            callback=debug_cmd,
+            filters=filters.outgoing & filters.regex(r"^(e|sh)\s+.*"),
+        )
+    }
+)
+
+
+async def tasks_cmd(client: Client, msg: Message) -> None:
+    names = [
+        task.get_name()
+        for task in asyncio.all_tasks()
+        if task.get_name().startswith(f"{client.me.id}_")
+    ]
+
+    if not names:
+        await msg.edit_text("<blockquote><b>None</b></blockquote>")
+        return await del_after(msg=msg, delay=2.5)
+
+    text = "<blockquote><b>List of Tasks</b></blockquote>\n"
+
+    urls = []
+    for i, name in enumerate(names, start=1):
+        _, chat_id, msg_id = name.split("_")
+
+        if chat_id.startswith("-100"):
+            url = f"https://t.me/c/{get_channel_id(int(chat_id))}/{msg_id}"
+        else:
+            url = f"tg://openmessage?user_id={chat_id}&message_id={msg_id}"
+
+        urls.append(f" <a href={url}><b>Task - {i}</b></a>")
+
+    text += "\n".join(urls)
+    await msg.edit_text(text=text)
+
+
+cmds.update(
+    {
+        "Tasks CMD": MessageHandler(
+            callback=tasks_cmd,
+            filters=filters.outgoing & ~filters.reply & filters.regex(r"^tasks$"),
         )
     }
 )
@@ -407,21 +424,21 @@ async def abort_cmd(client: Client, msg: Message) -> None:
     await msg.edit_text(text="<blockquote><b>Aborting...</b></blockquote>")
 
     tasks = []
-    if msg.reply_to_message_id:
-        task = client.message_cache.store.get(
-            f"{client.me.id}_{msg.chat.id}_{msg.reply_to_message_id}"
-        )
-        if task:
-            tasks = [task]
-
-    else:
-        for task in asyncio.all_tasks():
+    for task in asyncio.all_tasks():
+        if msg.reply_to_message_id:
+            if (
+                task.get_name()
+                == f"{client.me.id}_{msg.chat.id}_{msg.reply_to_message_id}"
+            ):
+                tasks = [task]
+                break
+        else:
             if task.get_name().startswith(f"{client.me.id}_"):
                 tasks.append(task)
 
     if not tasks:
         await msg.edit_text(text="<blockquote><b>None</b></blockquote>")
-        return
+        return await del_after(msg=msg, delay=2.5)
 
     for task in tasks:
         task.cancel()
@@ -429,11 +446,14 @@ async def abort_cmd(client: Client, msg: Message) -> None:
     text = f"{len(tasks)} Task{'s' if len(tasks) > 1 else ''} Aborted"
     await msg.edit_text(text=f"<blockquote><b>{text}</b></blockquote>")
 
+    await del_after(msg=msg, delay=2.5)
+
 
 cmds.update(
     {
         "Abort CMD": MessageHandler(
-            callback=abort_cmd, filters=filters.me & filters.regex(r"^x$")
+            callback=abort_cmd,
+            filters=filters.outgoing & filters.regex(r"^x$"),
         )
     }
 )
@@ -449,7 +469,7 @@ cmds.update(
     {
         "Delete CMD": MessageHandler(
             callback=delete_cmd,
-            filters=filters.me & filters.reply & filters.regex(r"^d$"),
+            filters=filters.outgoing & filters.reply & filters.regex(r"^d$"),
         )
     }
 )
@@ -470,10 +490,6 @@ async def purge_cmd(client: Client, msg: Message) -> None:
         ):
             ids.append(message.id)
         return ids
-
-    async def del_after(sleep: int = 0) -> None:
-        await asyncio.sleep(delay=sleep)
-        await msg.delete(revoke=True)
 
     await msg.edit_text(text="<blockquote><b>Purging...</b></blockquote>")
 
@@ -496,31 +512,21 @@ async def purge_cmd(client: Client, msg: Message) -> None:
     result = f"{done} Message{'s' if done > 1 else ''} Deleted"
     await msg.edit_text(text=f"<blockquote><b>{result}</b></blockquote>")
 
-    await del_after(sleep=2.5)
+    await del_after(msg=msg, delay=2.5)
 
 
 cmds.update(
     {
         "Purge CMD": MessageHandler(
             callback=purge_cmd,
-            filters=filters.me & (filters.regex(r"^purge$") & filters.reply)
-            | (filters.regex(r"^purgeme(\s\d+)?$") & ~filters.reply),
+            filters=filters.outgoing
+            & (
+                (filters.regex(r"^purge$") & filters.reply)
+                | (filters.regex(r"^purgeme(\s\d+)?$") & ~filters.reply)
+            ),
         )
     }
 )
-
-
-def user_btn(text: str, msg: Message) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    text=text,
-                    url=f"tg://openmessage?user_id={msg.from_user.id}&message_id={msg.id}",
-                )
-            ]
-        ]
-    )
 
 
 def chat_btn(text: str, msg: Message) -> InlineKeyboardMarkup:
@@ -538,80 +544,107 @@ def chat_btn(text: str, msg: Message) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(tmp)
 
 
-def size_valid(msg: Message) -> bool:
-    if msg.media:
-        obj = getattr(msg, msg.media.value)
-        if hasattr(obj, "file_size") and obj.file_size:
-            if obj.file_size > 64 * (1024**2):
-                return False
-    return True
+def user_btn(text: str, msg: Message) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    text=text,
+                    url=f"tg://openmessage?user_id={msg.chat.id}&message_id={msg.id}",
+                )
+            ]
+        ]
+    )
 
 
 async def send_log(msg: Message, btn: InlineKeyboardMarkup) -> None:
     app, bot = msg._client, msg._client.bot
 
-    async def download(file_id: str) -> io.BytesIO:
-        return await app.download_media(message=file_id, in_memory=True)
-
-    if msg.service:
-        return None
-
     app_id = app.me.id
+    rep_to = None
+
     caches = bot.message_cache.store
-
-    rep = None
-
     key_id = (app_id, msg.chat.id, msg.id)
     if key_id in caches.keys():
-        old = caches.get(key_id)
-        rep = ReplyParameters(message_id=old)
-        btn = None
+        rep_to, btn = ReplyParameters(message_id=caches.get(key_id)), None
 
-    if msg.text:
-        sent = await bot.send_message(
-            chat_id=app_id, text=msg.text.html, reply_markup=btn, reply_parameters=rep
-        )
-        caches.update({key_id: sent.id})
-        return
+    async def process(msg) -> None:
+        log = None
 
-    obj = getattr(msg, msg.media.value)
+        if msg.text:
+            log = await bot.send_message(
+                chat_id=app_id,
+                text=msg.text.html,
+                reply_parameters=rep_to,
+                reply_markup=btn,
+            )
 
-    if msg.sticker:
-        await bot.send_sticker(
-            chat_id=app_id, sticker=obj.file_id, reply_markup=btn, reply_parameters=rep
-        )
-        return
+        else:
+            obj = getattr(msg, msg.media.value)
 
-    if isinstance(obj, Story):
-        msg = await app.get_stories(story_sender_chat_id=obj.chat.id, story_ids=obj.id)
-        obj = getattr(msg, msg.media.value)
+            if msg.sticker:
+                await bot.send_sticker(
+                    chat_id=app_id,
+                    sticker=obj.file_id,
+                    reply_parameters=rep_to,
+                    reply_markup=btn,
+                )
+            else:
+                if isinstance(obj, Story):
+                    msg = await app.get_stories(
+                        story_sender_chat_id=obj.chat.id, story_ids=obj.id
+                    )
+                    obj = getattr(msg, msg.media.value)
 
-    send_media = getattr(bot, f"send_{msg.media.value}")
-    parameters = {
-        "chat_id": app_id,
-        "reply_markup": btn,
-        "reply_parameters": rep,
-        **(
-            {msg.media.value: await download(file_id=obj.file_id)}
-            if hasattr(obj, "file_id")
-            else {}
-        ),
-        **{
-            key: getattr(obj, key)
-            for key in dir(obj)
-            if key in send_media.__annotations__.keys()
-        },
-        **({"caption": msg.caption.html} if msg.caption else {}),
-    }
+                send_media = getattr(bot, f"send_{msg.media.value}")
+                parameters = {
+                    "chat_id": app_id,
+                    "reply_parameters": rep_to,
+                    "reply_markup": btn,
+                    **(
+                        {
+                            msg.media.value: await app.download_media(
+                                message=obj.file_id, in_memory=True
+                            )
+                        }
+                        if hasattr(obj, "file_id")
+                        else {}
+                    ),
+                    **{
+                        key: getattr(obj, key)
+                        for key in dir(obj)
+                        if key in send_media.__annotations__.keys()
+                    },
+                    **({"caption": msg.caption.html} if msg.caption else {}),
+                }
 
-    if "thumb" in parameters and obj.thumbs:
-        parameters.update({"thumb": await download(file_id=obj.thumbs[0].file_id)})
+                if "thumb" in parameters and obj.thumbs:
+                    parameters.update(
+                        {
+                            "thumb": await app.download_media(
+                                message=obj.thumbs[0].file_id, in_memory=True
+                            )
+                        }
+                    )
 
-    for attr in ["view_once", "ttl_seconds"]:
-        parameters.pop(attr, None)
+                for attr in ["view_once", "ttl_seconds"]:
+                    parameters.pop(attr, None)
 
-    sent = await send_media(**parameters)
-    caches.update({key_id: sent.id})
+                log = await send_media(**parameters)
+
+        if log:
+            caches.update({key_id: log.id})
+
+    task = asyncio.create_task(coro=process(msg))
+
+    app.max_concurrent_transmissions += 1
+    try:
+        await asyncio.wait_for(fut=task, timeout=15)
+    except asyncio.TimeoutError:
+        task.cancel()
+    finally:
+        del task
+        app.max_concurrent_transmissions -= 1
 
 
 def fmt_secs(secs: int | float) -> str:
@@ -624,6 +657,11 @@ def fmt_secs(secs: int | float) -> str:
     return f"{secs:.3f}".rstrip("0").rstrip(".") + " s"
 
 
+async def del_after(msg: Message, delay: int | float = 0.5) -> None:
+    await asyncio.sleep(delay=delay)
+    await msg.delete(revoke=True)
+
+
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO, format="%(levelname)s - %(name)s: %(message)s"
@@ -633,7 +671,7 @@ if __name__ == "__main__":
     ext = {
         "parse_mode": ParseMode.HTML,
         "sleep_threshold": 900,
-        "max_message_cache_size": 2147483647,
+        "max_message_cache_size": 2**31 - 1,
         "link_preview_options": LinkPreviewOptions(is_disabled=True),
     }
 
@@ -642,7 +680,6 @@ if __name__ == "__main__":
         api_id=2040,
         api_hash="b18441a1ff607e10a989891a5462e627",
         bot_token=os.getenv("BOT_TOKEN"),
-        workdir="sessions",
         no_updates=True,
         **ext,
     )
@@ -654,14 +691,6 @@ if __name__ == "__main__":
         apps.append(app)
 
     async def main() -> None:
-        def sys_update() -> None:
-            subprocess.run([sys.executable, "-m", "pip", "install", "-U", "pip"])
-            subprocess.run(
-                [sys.executable, "-m", "pip", "install", "-U", "-r", "requirements.txt"]
-            )
-
-            os.system("clear")
-
         async def start(client: Client) -> None:
             await client.start()
 
@@ -670,17 +699,11 @@ if __name__ == "__main__":
                 client.add_handler(handler=handler, group=group)
                 logger.info(f"{name} Added")
 
-            setattr(client, "call", PyTgCalls(client))
-            await client.call.start()
-
             limit = await client.get_dialogs_count()
             async for _ in client.get_dialogs(limit=limit):
                 pass
 
             await client.storage.save()
-
-        sys_update()
-        logging.info("System Up to Date")
 
         await bot.start()
         logging.info("Client Helper Started")
