@@ -529,7 +529,7 @@ cmds.update(
 )
 
 
-def chat_btn(text: str, msg: Message) -> InlineKeyboardMarkup:
+def chat_btn(text: str, msg: Message) -> list:
     channel_id = get_channel_id(msg.chat.id)
 
     url = f"https://t.me/c/{channel_id}/{msg.id}"
@@ -543,32 +543,39 @@ def chat_btn(text: str, msg: Message) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="User", url=f"tg://user?id={msg.from_user.id}")],
         )
 
-    return InlineKeyboardMarkup(tmp)
+    return tmp
 
 
-def user_btn(text: str, msg: Message) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
+def user_btn(text: str, msg: Message) -> list:
+    return [
         [
-            [
-                InlineKeyboardButton(
-                    text=text,
-                    url=f"tg://openmessage?user_id={msg.chat.id}&message_id={msg.id}",
-                )
-            ]
+            InlineKeyboardButton(
+                text=text,
+                url=f"tg://openmessage?user_id={msg.chat.id}&message_id={msg.id}",
+            )
         ]
-    )
+    ]
 
 
-async def send_log(msg: Message, btn: InlineKeyboardMarkup) -> None:
+async def send_log(msg: Message, btn: list) -> None:
     app, bot = msg._client, msg._client.bot
 
     app_id = app.me.id
     rep_to = None
+    button = InlineKeyboardMarkup(btn)
+
+    if msg.reply_markup:
+        row = msg.reply_markup.inline_keyboard
+        for i in btn:
+            row.append(i)
+
+        button = InlineKeyboardMarkup(row)
 
     caches = bot.message_cache.store
     key_id = (app_id, msg.chat.id, msg.id)
     if key_id in caches.keys():
-        rep_to, btn = ReplyParameters(message_id=caches.get(key_id)), None
+        rep_to = ReplyParameters(message_id=caches.get(key_id))
+        button = msg.reply_markup
 
     async def process(msg) -> None:
         log = None
@@ -578,7 +585,7 @@ async def send_log(msg: Message, btn: InlineKeyboardMarkup) -> None:
                 chat_id=app_id,
                 text=msg.text.html,
                 reply_parameters=rep_to,
-                reply_markup=btn,
+                reply_markup=button,
             )
 
         else:
@@ -589,7 +596,7 @@ async def send_log(msg: Message, btn: InlineKeyboardMarkup) -> None:
                     chat_id=app_id,
                     sticker=obj.file_id,
                     reply_parameters=rep_to,
-                    reply_markup=btn,
+                    reply_markup=button,
                 )
             else:
                 if isinstance(obj, Story):
@@ -602,7 +609,7 @@ async def send_log(msg: Message, btn: InlineKeyboardMarkup) -> None:
                 parameters = {
                     "chat_id": app_id,
                     "reply_parameters": rep_to,
-                    "reply_markup": btn,
+                    "reply_markup": button,
                     **(
                         {
                             msg.media.value: await app.download_media(
