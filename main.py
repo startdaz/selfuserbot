@@ -530,9 +530,11 @@ cmds.update(
 
 
 def chat_btn(text: str, msg: Message) -> InlineKeyboardMarkup:
-    url = f"https://t.me/c/{get_channel_id(msg.chat.id)}/{msg.id}"
-    if msg.chat.is_forum:
-        url = msg.link
+    channel_id = get_channel_id(msg.chat.id)
+
+    url = f"https://t.me/c/{channel_id}/{msg.id}"
+    if msg.chat.is_forum and msg.message_thread_id:
+        url = f"https://t.me/c/{channel_id}/{msg.message_thread_id}/{msg.id}"
 
     tmp = [[InlineKeyboardButton(text=text, url=url)]]
     if msg.from_user:
