@@ -339,7 +339,6 @@ async def debug_cmd(client: Client, msg: Message) -> None:
                 "asyncio": asyncio,
                 "pyrogram": pyrogram,
                 "bot": bot,
-                "logs": list(client.logs),
                 "c": client,
                 "m": msg,
                 "r": msg.reply_to_message,
