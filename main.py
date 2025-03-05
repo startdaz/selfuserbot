@@ -63,16 +63,6 @@ bot = Client(
 
 cmds = {}
 
-
-async def update_log(
-    client: Client, update: Update, user: User, channel: Channel
-) -> None:
-    client.logs.append((update, user, channel))
-
-
-cmds.update({"Update Log": RawUpdateHandler(callback=update_log)})
-
-
 async def action_log(client: Client, update: Update, _: User, __: Channel) -> None:
     user_id = update.user_id
 
