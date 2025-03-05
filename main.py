@@ -56,7 +56,7 @@ bot = Client(
     bot_token=os.getenv("BOT_TOKEN"),
     no_updates=True,
     parse_mode=ParseMode.HTML,
-    sleep_threshold=900,
+    sleep_threshold=86400,
     max_message_cache_size=2**31 - 1,
     link_preview_options=LinkPreviewOptions(is_disabled=True),
 )
