@@ -13,7 +13,7 @@ import pyrogram
 from meval import meval
 from pyrogram import Client, filters
 from pyrogram.enums import ChatType, ParseMode
-from pyrogram.errors import MessageIdInvalid, PeerIdInvalid
+from pyrogram.errors import MessageIdInvalid, PeerIdInvalid, FloodWait
 from pyrogram.handlers import (
     DeletedMessagesHandler,
     EditedMessageHandler,
@@ -37,6 +37,8 @@ from pyrogram.types import (
     Message,
     ReplyParameters,
     Story,
+    InputMediaPhoto,
+    InputMediaVideo,
 )
 from pyrogram.utils import get_channel_id, timestamp_to_datetime
 
@@ -124,17 +126,10 @@ async def profile_log(client: Client, update: Update, _: User, __: Channel) -> N
     )
     log = f"First Name: {html.escape(update.first_name)}{fmt}"
 
-    await asyncio.gather(
-        client.add_contact(
-            user_id=user_id,
-            first_name=update.first_name,
-            last_name=update.last_name or "",
-        ),
-        bot.send_message(
-            chat_id=client.me.id,
-            text=f"<pre language='Profile Updated'>{log}</pre>",
-            reply_markup=btn,
-        ),
+    await bot.send_message(
+        chat_id=client.me.id,
+        text=f"<pre language='Profile Updated'>{log}</pre>",
+        reply_markup=btn,
     )
 
 
@@ -282,62 +277,53 @@ cmds.update(
 
 async def incoming_log(client: Client, msg: Message) -> None:
     cache = client.message_cache.store
-    store = False
-
+    cache.update({(msg.id, msg.chat.id): msg})
+    
     if msg.chat.type == ChatType.PRIVATE:
-        store = True
-
         btn_text = "Message from Contact" if msg.from_user.is_contact else "From Non-Contact"
-        btn = log_btn(msg=msg, text=btn_text)
+    else:
+        btn_text = "Incoming Message"
 
-        if msg.media:
-            obj = getattr(msg, msg.media.value)
-            if hasattr(obj, "ttl_seconds") and obj.ttl_seconds:
-                btn = log_btn(msg=msg, text="Self-Destruct Media")
+    btn = log_btn(msg=msg, text=btn_text)
+    
+    if msg.media:
+        obj = getattr(msg, msg.media.value)
+        if hasattr(obj, "ttl_seconds") and obj.ttl_seconds:
+            btn = log_btn(msg=msg, text="Self-Destruct Media")
 
-        await send_log(msg=msg, btn=btn)
-
-    if store:
-        cache.update({(msg.id, msg.chat.id): msg})
-
+    await send_log(msg=msg, btn=btn)
     cache.pop((msg.chat.id, msg.id), None)
-
 
 cmds.update(
     {
         "Incoming Log": MessageHandler(
             callback=incoming_log,
-            filters=~filters.me
-            & ~filters.bot
-            & ~filters.create(
-                lambda _, __, msg: msg.from_user and msg.from_user.is_support,
-                name="Filter Support",
-            )
-            & (filters.mentioned | filters.private),
+            filters=~filters.me & ~filters.bot & (filters.mentioned | filters.private),
         )
     }
 )
 
 
-async def add_contact(client: Client, msg: Message) -> None:
-    user = await client.get_users(msg.chat.id)
-    if not (user.is_contact or user.is_support):
-        await client.add_contact(
-            user_id=user.id,
-            first_name=user.first_name,
-            last_name=user.last_name or "",
-        )
 
-    await msg.continue_propagation()
+#async def add_contact(client: Client, msg: Message) -> None:
+#    user = await client.get_users(msg.chat.id)
+#    if not (user.is_contact or user.is_support):
+#        await client.add_contact(
+#            user_id=user.id,
+#            first_name=user.first_name,
+#            last_name=user.last_name or "",
+#        )
+#
+#    await msg.continue_propagation()
 
 
-cmds.update(
-    {
-        "Add Contact": MessageHandler(
-            callback=add_contact, filters=filters.me & filters.private & ~filters.bot
-        )
-    }
-)
+#cmds.update(
+#    {
+#        "Add Contact": MessageHandler(
+#            callback=add_contact, filters=filters.me & filters.private & ~filters.bot
+#        )
+#    }
+#)
 
 
 async def debug_cmd(client: Client, msg: Message) -> None:
@@ -357,6 +343,9 @@ async def debug_cmd(client: Client, msg: Message) -> None:
 
         if cmd == "e":
             kwargs = {
+                "os": os,
+                "re": re,
+                "sys": sys,
                 "asyncio": asyncio,
                 "pyrogram": pyrogram,
                 "bot": bot,
@@ -365,6 +354,9 @@ async def debug_cmd(client: Client, msg: Message) -> None:
                 "m": msg,
                 "r": msg.reply_to_message,
                 "u": (msg.reply_to_message or msg).from_user,
+                "InputMediaPhoto": InputMediaPhoto,
+                "InputMediaVideo": InputMediaVideo,
+                "FloodWait": FloodWait,
             }
 
             f = io.StringIO()
@@ -739,9 +731,6 @@ if __name__ == "__main__":
     async def main() -> None:
         async def start(client: Client) -> None:
             await client.start()
-            setattr(
-                client, "logs", collections.deque(maxlen=client.max_message_cache_size)
-            )
 
             logger = logging.getLogger(str(client.me.id))
             for group, (name, handler) in enumerate(cmds.items(), start=1):
