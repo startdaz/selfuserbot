@@ -334,7 +334,6 @@ async def debug_cmd(client: Client, msg: Message) -> None:
         if cmd == "e":
             kwargs = {
                 "os": os,
-                "re": re,
                 "sys": sys,
                 "asyncio": asyncio,
                 "pyrogram": pyrogram,
