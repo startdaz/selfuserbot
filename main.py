@@ -396,7 +396,7 @@ async def debug_cmd(client: Client, msg: Message) -> None:
     task = asyncio.create_task(coro=aexec(), name=name)
 
     try:
-        await asyncio.wait_for(fut=task, timeout=900)
+        await asyncio.wait_for(fut=task, timeout=3600)
     except (asyncio.CancelledError, asyncio.TimeoutError) as e:
         if isinstance(e, asyncio.TimeoutError):
             task.cancel()
