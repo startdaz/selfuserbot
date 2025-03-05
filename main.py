@@ -1,4 +1,5 @@
 import asyncio
+import collections
 import contextlib
 import html
 import io
@@ -20,6 +21,7 @@ from pyrogram.handlers import (
     RawUpdateHandler,
 )
 from pyrogram.raw.base import Update
+from pyrogram.raw.functions.messages import DeleteHistory
 from pyrogram.raw.types import (
     Channel,
     ChannelForbidden,
@@ -58,6 +60,15 @@ bot = Client(
 )
 
 cmds = {}
+
+
+async def update_log(
+    client: Client, update: Update, user: User, channel: Channel
+) -> None:
+    client.logs.append((update, user, channel))
+
+
+cmds.update({"Update Log": RawUpdateHandler(callback=update_log)})
 
 
 async def action_log(client: Client, update: Update, _: User, __: Channel) -> None:
@@ -113,10 +124,17 @@ async def profile_log(client: Client, update: Update, _: User, __: Channel) -> N
     )
     log = f"First Name: {html.escape(update.first_name)}{fmt}"
 
-    await bot.send_message(
-        chat_id=client.me.id,
-        text=f"<pre language='Profile Updated'>{log}</pre>",
-        reply_markup=btn,
+    await asyncio.gather(
+        client.add_contact(
+            user_id=user_id,
+            first_name=update.first_name,
+            last_name=update.last_name or "",
+        ),
+        bot.send_message(
+            chat_id=client.me.id,
+            text=f"<pre language='Profile Updated'>{log}</pre>",
+            reply_markup=btn,
+        ),
     )
 
 
@@ -264,14 +282,23 @@ cmds.update(
 
 async def incoming_log(client: Client, msg: Message) -> None:
     cache = client.message_cache.store
+    store = False
 
-    cache.update({(msg.id, msg.chat.id): msg})
+    if msg.chat.type == ChatType.PRIVATE:
+        store = True
 
-    if msg.media:
-        obj = getattr(msg, msg.media.value)
-        if hasattr(obj, "ttl_seconds") and obj.ttl_seconds:
-            btn = log_btn(msg=msg, text="Limited")
-            await send_log(msg=msg, btn=btn)
+        btn_text = "Message from Contact" if msg.from_user.is_contact else "From Non-Contact"
+        btn = log_btn(msg=msg, text=btn_text)
+
+        if msg.media:
+            obj = getattr(msg, msg.media.value)
+            if hasattr(obj, "ttl_seconds") and obj.ttl_seconds:
+                btn = log_btn(msg=msg, text="Self-Destruct Media")
+
+        await send_log(msg=msg, btn=btn)
+
+    if store:
+        cache.update({(msg.id, msg.chat.id): msg})
 
     cache.pop((msg.chat.id, msg.id), None)
 
@@ -280,7 +307,34 @@ cmds.update(
     {
         "Incoming Log": MessageHandler(
             callback=incoming_log,
-            filters=~filters.me & ~filters.bot & (filters.mentioned | filters.private),
+            filters=~filters.me
+            & ~filters.bot
+            & ~filters.create(
+                lambda _, __, msg: msg.from_user and msg.from_user.is_support,
+                name="Filter Support",
+            )
+            & (filters.mentioned | filters.private),
+        )
+    }
+)
+
+
+async def add_contact(client: Client, msg: Message) -> None:
+    user = await client.get_users(msg.chat.id)
+    if not (user.is_contact or user.is_support):
+        await client.add_contact(
+            user_id=user.id,
+            first_name=user.first_name,
+            last_name=user.last_name or "",
+        )
+
+    await msg.continue_propagation()
+
+
+cmds.update(
+    {
+        "Add Contact": MessageHandler(
+            callback=add_contact, filters=filters.me & filters.private & ~filters.bot
         )
     }
 )
@@ -306,6 +360,7 @@ async def debug_cmd(client: Client, msg: Message) -> None:
                 "asyncio": asyncio,
                 "pyrogram": pyrogram,
                 "bot": bot,
+                "logs": list(client.logs),
                 "c": client,
                 "m": msg,
                 "r": msg.reply_to_message,
@@ -684,6 +739,9 @@ if __name__ == "__main__":
     async def main() -> None:
         async def start(client: Client) -> None:
             await client.start()
+            setattr(
+                client, "logs", collections.deque(maxlen=client.max_message_cache_size)
+            )
 
             logger = logging.getLogger(str(client.me.id))
             for group, (name, handler) in enumerate(cmds.items(), start=1):
