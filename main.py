@@ -305,7 +305,7 @@ cmds.update({"Deleted Log": DeletedMessagesHandler(callback=deleted_log)})
 async def edited_log(client: Client, msg: Message) -> None:
     k, v, cache = (msg.id, msg.chat.id), msg, client.message_cache.store
     if k in cache:
-        msg = cache.get((msg.id, msg.chat.id))
+        msg = cache.get(k)
 
     cache.update({k: v})
 
@@ -319,7 +319,14 @@ cmds.update(
     {
         "Edited Log": EditedMessageHandler(
             callback=edited_log,
-            filters=~filters.me & ~filters.bot & (filters.mentioned | filters.private),
+            filters=~filters.me
+            & ~filters.bot
+            & ~filters.via_bot
+            & ~filters.create(
+                lambda _, __, msg: msg._raw.edit_hide,
+                name="Filter Reaction",
+            )
+            & (filters.mentioned | filters.private),
         )
     }
 )
@@ -348,7 +355,9 @@ cmds.update(
     {
         "Incoming Log": MessageHandler(
             callback=incoming_log,
-            filters=~filters.me & ~filters.bot & (filters.mentioned | filters.private),
+            filters=~filters.me
+            & ~filters.bot
+            & (filters.mentioned | filters.private),
         )
     }
 )
