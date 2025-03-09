@@ -4,3 +4,4 @@ meval
 pyrotgfork
 pytgcrypto
 uvloop
+python-dotenv
