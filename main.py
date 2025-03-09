@@ -304,16 +304,10 @@ cmds.update({"Deleted Log": DeletedMessagesHandler(callback=deleted_log)})
 
 async def edited_log(client: Client, msg: Message) -> None:
     k, v, cache = (msg.id, msg.chat.id), msg, client.message_cache.store
-    if k in cache:
-        msg = cache.get(k)
-
     cache.update({k: v})
-
     btn = log_btn(msg=msg, text="Edited")
     await send_log(msg=msg, btn=btn)
-
     cache.pop((msg.chat.id, msg.id), None)
-
 
 cmds.update(
     {
@@ -337,11 +331,22 @@ async def incoming_log(client: Client, msg: Message) -> None:
     cache.update({(msg.id, msg.chat.id): msg})
     
     if msg.chat.type == ChatType.PRIVATE:
-        btn_text = "Message from Contact" if msg.from_user.is_contact else "From Non-Contact"
+        btn_text = f"{msg.from_user.first_name} {msg.from_user.last_name}" if msg.from_user else "Unknown"
+        user_id = msg.from_user.id if msg.from_user else msg.chat.id
+        btn = InlineKeyboardMarkup(
+            [[InlineKeyboardButton(text=btn_text, url=f"tg://user?id={user_id}")]]
+        )
     else:
-        btn_text = "Incoming Message"
-
-    btn = log_btn(msg=msg, text=btn_text)
+        btn_text = msg.chat.title if msg.chat.title else "Group/Channel"
+        group_url = f"https://t.me/{msg.chat.username}" if msg.chat.username else f"https://t.me/c/{get_channel_id(msg.chat.id)}/{msg.id}"
+        profile_url = f"tg://user?id={msg.from_user.id}" if msg.from_user else "#"
+        reply_url = f"https://t.me/c/{get_channel_id(msg.chat.id)}/{msg.reply_to_message.id}" if msg.reply_to_message else "#"
+        
+        btn = InlineKeyboardMarkup([
+            [InlineKeyboardButton(text=btn_text, url=group_url)],
+            [InlineKeyboardButton(text=f"{msg.from_user.first_name} {msg.from_user.last_name}", url=profile_url)],
+            [InlineKeyboardButton(text="Replied Message", url=reply_url)]
+        ])
     
     if msg.media:
         obj = getattr(msg, msg.media.value)
@@ -361,7 +366,6 @@ cmds.update(
         )
     }
 )
-
 
 
 #async def add_contact(client: Client, msg: Message) -> None:
