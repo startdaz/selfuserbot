@@ -304,15 +304,14 @@ cmds.update({"Deleted Log": DeletedMessagesHandler(callback=deleted_log)})
 
 async def edited_log(client: Client, msg: Message) -> None:
     k, v, cache = (msg.id, msg.chat.id), msg, client.message_cache.store
-    if k in cache:
-        msg = cache.get(k)
-
     cache.update({k: v})
-
     btn = log_btn(msg=msg, text="Edited")
     await send_log(msg=msg, btn=btn)
-
     cache.pop((msg.chat.id, msg.id), None)
+
+
+def filter_reaction(_, __, msg):
+    return hasattr(msg._raw, "edit_hide") and msg._raw.edit_hide
 
 
 cmds.update(
@@ -322,14 +321,12 @@ cmds.update(
             filters=~filters.me
             & ~filters.bot
             & ~filters.via_bot
-            & ~filters.create(
-                lambda _, __, msg: msg._raw.edit_hide,
-                name="Filter Reaction",
-            )
+            & ~filters.create(filter_reaction, name="Filter Reaction")
             & (filters.mentioned | filters.private),
         )
     }
 )
+
 
 
 async def incoming_log(client: Client, msg: Message) -> None:
