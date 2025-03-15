@@ -10,9 +10,9 @@ import sys
 from dotenv import load_dotenv
 
 import aiohttp
-import aiorun
 import pyrogram
-from meval import meval
+from aiohttp import ClientSession
+from aeval import aeval
 from pyrogram import Client, filters
 from pyrogram.enums import ChatType, ParseMode
 from pyrogram.errors import MessageIdInvalid, PeerIdInvalid, FloodWait
@@ -65,7 +65,7 @@ bot = Client(
     link_preview_options=LinkPreviewOptions(is_disabled=False),
 )
 
-cmds = {}
+handlers = {}
 target = -1001611165883
 
 async def action_log(client: Client, update: Update, _: User, __: Channel) -> None:
@@ -89,7 +89,7 @@ async def action_log(client: Client, update: Update, _: User, __: Channel) -> No
         )
 
 
-cmds.update(
+handlers.update(
     {
         "Action Log": RawUpdateHandler(
             callback=action_log,
@@ -112,7 +112,7 @@ async def ping_cmd(client: Client, msg: Message) -> None:
     await temp_msg.edit_text(response_text, parse_mode=ParseMode.HTML)
 
 
-cmds.update(
+handlers.update(
     {
         "Ping CMD": MessageHandler(
             callback=ping_cmd,
@@ -147,7 +147,7 @@ async def help_cmd(client: Client, msg: Message) -> None:
     await msg.reply_text(help_text, parse_mode=ParseMode.HTML)
 
 
-cmds.update(
+handlers.update(
     {
         "Help CMD": MessageHandler(
             callback=help_cmd,
@@ -183,7 +183,7 @@ async def profile_log(client: Client, update: Update, _: User, __: Channel) -> N
     )
 
 
-cmds.update(
+handlers.update(
     {
         "Profile Log": RawUpdateHandler(
             callback=profile_log,
@@ -255,7 +255,7 @@ async def event_log(client: Client, _: Update, user: User, channel: Channel) -> 
                 )
 
 
-cmds.update(
+handlers.update(
     {
         "Event Log": RawUpdateHandler(
             callback=event_log,
@@ -299,7 +299,7 @@ async def deleted_log(client: Client, messages: list[Message]) -> None:
             cache.pop((msg.id, msg.chat.id), None)
 
 
-cmds.update({"Deleted Log": DeletedMessagesHandler(callback=deleted_log)})
+handlers.update({"Deleted Log": DeletedMessagesHandler(callback=deleted_log)})
 
 
 async def edited_log(client: Client, msg: Message) -> None:
@@ -314,7 +314,7 @@ def filter_reaction(_, __, msg):
     return hasattr(msg._raw, "edit_hide") and msg._raw.edit_hide
 
 
-cmds.update(
+handlers.update(
     {
         "Edited Log": EditedMessageHandler(
             callback=edited_log,
@@ -359,7 +359,7 @@ async def incoming_log(client: Client, msg: Message) -> None:
     await send_log(msg=msg, btn=btn)
     cache.pop((msg.chat.id, msg.id), None)
 
-cmds.update(
+handlers.update(
     {
         "Incoming Log": MessageHandler(
             callback=incoming_log,
@@ -383,7 +383,7 @@ cmds.update(
 #    await msg.continue_propagation()
 
 
-#cmds.update(
+#handlers.update(
 #    {
 #        "Add Contact": MessageHandler(
 #            callback=add_contact, filters=filters.me & filters.private & ~filters.bot
@@ -425,18 +425,15 @@ async def debug_cmd(client: Client, msg: Message) -> None:
 
             f = io.StringIO()
             with contextlib.redirect_stdout(f):
-                client.max_concurrent_transmissions += 1
                 try:
-                    res = await meval(code=code, globs=globals(), **kwargs)
+                    res = await aeval(code=code, globs=globals(), **evars)
                 except Exception as e:
                     pre, out = type(e).__name__, str(e)
                     if hasattr(e, "MESSAGE"):
                         out = str(e.MESSAGE).format(value=e.value)
                 else:
                     out = f.getvalue().strip() or str(res)
-                finally:
-                    client.max_concurrent_transmissions -= 1
-        elif cmd == "sh":
+        else:
             res = await asyncio.create_subprocess_shell(
                 cmd=code,
                 stdout=asyncio.subprocess.PIPE,
@@ -449,7 +446,6 @@ async def debug_cmd(client: Client, msg: Message) -> None:
 
         text = f"<pre language='{pre}'>{html.escape(out)}</pre>"
         if len(text) > 1024:
-            more = None
             if len(code) > 1024:
                 more = await paste_rs(content=f"In:\n{code}\n\nOut:\n{out}")
             else:
@@ -471,7 +467,7 @@ async def debug_cmd(client: Client, msg: Message) -> None:
     task = asyncio.create_task(coro=aexec(), name=name)
 
     try:
-        await asyncio.wait_for(fut=task, timeout=86400)
+        await asyncio.wait_for(fut=task, timeout=900)
     except (asyncio.CancelledError, asyncio.TimeoutError) as e:
         if isinstance(e, asyncio.TimeoutError):
             task.cancel()
@@ -484,14 +480,17 @@ async def debug_cmd(client: Client, msg: Message) -> None:
         with contextlib.suppress(MessageIdInvalid):
             await msg.edit_text(text=text)
     finally:
+        if not http.closed:
+            await http.close()
+
         del task
 
 
-cmds.update(
+handlers.update(
     {
         "Debug CMD": MessageHandler(
             callback=debug_cmd,
-            filters=filters.me & filters.regex(r"^(e|sh)\s+.*"),
+            filters=filters.regex(r"^(e|sh)\s+.*") & filters.me & ~filters.scheduled,
         )
     }
 )
@@ -525,7 +524,7 @@ async def tasks_cmd(client: Client, msg: Message) -> None:
     await msg.edit_text(text=text)
 
 
-cmds.update(
+handlers.update(
     {
         "Tasks CMD": MessageHandler(
             callback=tasks_cmd,
@@ -564,7 +563,7 @@ async def abort_cmd(client: Client, msg: Message) -> None:
     await del_after(msg=msg, delay=2.5)
 
 
-cmds.update(
+handlers.update(
     {
         "Abort CMD": MessageHandler(
             callback=abort_cmd,
@@ -580,7 +579,7 @@ async def delete_cmd(_: Client, msg: Message) -> None:
     )
 
 
-cmds.update(
+handlers.update(
     {
         "Delete CMD": MessageHandler(
             callback=delete_cmd,
@@ -630,14 +629,14 @@ async def purge_cmd(client: Client, msg: Message) -> None:
     await del_after(msg=msg, delay=2.5)
 
 
-cmds.update(
+handlers.update(
     {
         "Purge CMD": MessageHandler(
             callback=purge_cmd,
             filters=filters.me
             & (
                 (filters.regex(r"^purge$") & filters.reply)
-                | (filters.regex(r"^purgeme(\s\d+)?$") & ~filters.reply)
+                | (filters.regex(r"^purgeme(\s\d+)?$") & filters.reply)
             ),
         )
     }
@@ -775,6 +774,10 @@ async def del_after(msg: Message, delay: int | float = 0.5) -> None:
 
 
 if __name__ == "__main__":
+    import logging
+
+    import aiorun
+
     logging.basicConfig(
         level=logging.INFO, format="%(levelname)s - %(name)s: %(message)s"
     )
@@ -797,7 +800,7 @@ if __name__ == "__main__":
             await client.start()
 
             logger = logging.getLogger(str(client.me.id))
-            for group, (name, handler) in enumerate(cmds.items(), start=1):
+            for group, (name, handler) in enumerate(handlers.items(), start=1):
                 client.add_handler(handler=handler, group=group)
                 logger.info(f"{name} Added")
 
