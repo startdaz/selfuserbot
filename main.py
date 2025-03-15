@@ -68,6 +68,47 @@ bot = Client(
 handlers = {}
 target = -1001611165883
 
+async def uptd_cmd(client: Client, msg: Message) -> None:
+    await msg.edit_text("Updating the bot, please wait...")
+
+    process = await asyncio.create_subprocess_shell(
+        "git pull",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+
+    if process.returncode == 0:
+        update_result = f"Update successful:\n{stdout.decode().strip()}"
+    else:
+        update_result = f"Update failed:\n{stderr.decode().strip()}"
+
+    restart_command = f"{sys.executable} {' '.join(sys.argv)}"
+    restart_process = await asyncio.create_subprocess_shell(
+        restart_command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    restart_stdout, restart_stderr = await restart_process.communicate()
+
+    if restart_process.returncode == 0:
+        restart_result = f"Restart successful:\n{restart_stdout.decode().strip()}"
+    else:
+        restart_result = f"Restart failed:\n{restart_stderr.decode().strip()}"
+
+    result = f"{update_result}\n\n{restart_result}"
+    await msg.edit_text(result, parse_mode=ParseMode.HTML)
+
+handlers.update(
+    {
+        "Uptd CMD": MessageHandler(
+            callback=uptd_cmd,
+            filters=filters.me & filters.regex(r"^uptd$"),
+        )
+    }
+)
+
+
 async def action_log(client: Client, update: Update, _: User, __: Channel) -> None:
     user_id = update.user_id
 
