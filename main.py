@@ -43,7 +43,7 @@ from pyrogram.types import (
 )
 from pyrogram.utils import get_channel_id, timestamp_to_datetime
 
-load_dotenv()
+load_dotenv() # test updated
 
 try:
     import uvloop
@@ -181,6 +181,7 @@ async def help_cmd(client: Client, msg: Message) -> None:
 🛠 <b>Tambahan:</b>
 • <code>help</code> → Tampilkan daftar perintah ini.
 • <code>ping</code> → Tampilkan Respon/latency Bot.
+• <code>uptd</code> → Tampilkan Update repo
 
 <b>Credit: Selfbot© 🚀</b>
 """
