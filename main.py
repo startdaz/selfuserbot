@@ -1,12 +1,11 @@
 import asyncio
-import collections
 import contextlib
 import html
 import io
 import logging
 import os
-import time
 import sys
+import time
 from dotenv import load_dotenv
 
 import aiohttp
